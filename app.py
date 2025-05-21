@@ -1,20 +1,15 @@
-# %% [markdown]
-# # 📊 Cashflow Interactivo con Exportación Completa y Recomendaciones
 
-# %%
-
+import streamlit as st
 import pandas as pd
 import numpy as np
 from datetime import datetime
 import matplotlib.pyplot as plt
-import ipywidgets as widgets
-from IPython.display import display, clear_output
-import io
-from IPython.display import FileLink
+from io import BytesIO
+from tempfile import NamedTemporaryFile
 
+st.set_page_config(page_title="Cashflow Interactivo", layout="wide")
 
-# %%
-
+# --- Función principal ---
 def generar_cashflow(inicio, fin, saldo_inicial, reducciones):
     fechas = pd.date_range(start=inicio, end=fin)
     cashflow = pd.DataFrame({'fecha': fechas})
@@ -32,7 +27,7 @@ def generar_cashflow(inicio, fin, saldo_inicial, reducciones):
     for fecha in fechas:
         if fecha.day in [15, 30, 31]:
             ingreso_dia = fecha
-            if fecha.weekday() == 5:
+            if ingreso_dia.weekday() == 5:
                 ingreso_dia -= pd.Timedelta(days=1)
             elif ingreso_dia.weekday() == 6:
                 ingreso_dia -= pd.Timedelta(days=2)
@@ -61,6 +56,7 @@ def generar_cashflow(inicio, fin, saldo_inicial, reducciones):
         'Coca': 50, 'Salida': 130, 'Comida fuera': 100,
         'Comida': 50, 'Varios': 100, 'Waro': 250
     }
+
     total_usos = {k: 0 for k in variables}
     total_reducido = {k: 0 for k in variables}
 
@@ -125,65 +121,57 @@ def generar_cashflow(inicio, fin, saldo_inicial, reducciones):
 
     return cashflow, resumen_df, dias_criticos, recomendaciones_df
 
+# --- Interfaz Streamlit ---
+st.title("📊 Cashflow Interactivo con Recomendaciones y Exportación")
 
-# %%
+col1, col2 = st.columns(2)
+with col1:
+    fecha_inicio = st.date_input("Fecha de inicio", value=datetime(2025, 5, 20))
+    saldo_inicial = st.number_input("Saldo inicial", value=800.0, step=50.0)
+with col2:
+    fecha_fin = st.date_input("Fecha de fin", value=datetime(2025, 6, 30))
 
-fecha_inicio = widgets.DatePicker(description='Inicio', value=datetime(2025, 5, 20))
-fecha_fin = widgets.DatePicker(description='Fin', value=datetime(2025, 6, 30))
-saldo_inicial = widgets.BoundedFloatText(value=800.0, min=0, max=10000, step=50, description='Saldo inicial')
+st.subheader("🔧 Reducción de gastos variables")
+reducciones = {}
+for var in ['Coca', 'Salida', 'Comida fuera', 'Comida', 'Varios', 'Waro']:
+    reducciones[var] = st.slider(f"{var}", min_value=0.0, max_value=1.0, value=0.0, step=0.1)
 
-sliders = {
-    cat: widgets.FloatSlider(value=0, min=0, max=1, step=0.1, description=cat)
-    for cat in ['Coca', 'Salida', 'Comida fuera', 'Comida', 'Varios', 'Waro']
-}
+if st.button("Simular Cashflow"):
+    df, resumen, criticos, recomendaciones = generar_cashflow(fecha_inicio, fecha_fin, saldo_inicial, reducciones)
 
-boton = widgets.Button(description="Simular")
-output = widgets.Output()
-excel_output = widgets.Output()
+    st.subheader("📅 Flujo Detallado")
+    st.dataframe(df[['fecha', 'ingresos', 'descripcion_ingresos', 'gastos', 'descripcion_gastos', 'saldo']], use_container_width=True)
 
-def simular(b):
-    reducciones = {k: s.value for k, s in sliders.items()}
-    df, resumen_df, criticos_df, recomendaciones_df = generar_cashflow(
-        fecha_inicio.value, fecha_fin.value, saldo_inicial.value, reducciones)
+    st.subheader("📉 Gráfico de saldo")
+    fig, ax = plt.subplots(figsize=(12, 4))
+    ax.plot(df['fecha'], df['saldo'], marker='o')
+    ax.axhline(0, color='red', linestyle='--')
+    ax.fill_between(df['fecha'], df['saldo'], where=df['saldo'] < 500, color='orange', alpha=0.3)
+    ax.set_title('Saldo diario')
+    ax.set_ylabel('GTQ')
+    ax.set_xlabel('Fecha')
+    ax.grid(True)
+    st.pyplot(fig)
 
-    with output:
-        clear_output(wait=True)
-        pd.set_option('display.max_colwidth', 1000)
-        display(df[['fecha', 'ingresos', 'descripcion_ingresos', 'gastos', 'descripcion_gastos', 'saldo']])
-        plt.figure(figsize=(12, 5))
-        plt.plot(df['fecha'], df['saldo'], marker='o', linestyle='-', label='Saldo diario')
-        plt.axhline(0, color='red', linestyle='--', label='Límite de sobregiro')
-        plt.fill_between(df['fecha'], df['saldo'], where=df['saldo'] < 500, color='orange', alpha=0.3, label='Bajo balance')
-        plt.title('Cashflow Interactivo - Flujo Expandido')
-        plt.xlabel('Fecha')
-        plt.ylabel('Saldo (GTQ)')
-        plt.xticks(rotation=45)
-        plt.grid(True)
-        plt.legend()
-        plt.tight_layout()
-        plt.show()
-        print("\n📌 Resumen de Reducciones Aplicadas:")
-        display(resumen_df)
-        print("\n🚨 Días Críticos (Saldo < 500):")
-        display(criticos_df[['fecha', 'saldo', 'gastos', 'descripcion_gastos']])
-        print("\n💡 Recomendaciones:")
-        display(recomendaciones_df)
+    st.subheader("📌 Resumen de Reducciones")
+    st.dataframe(resumen, use_container_width=True)
 
-    with excel_output:
-        clear_output(wait=True)
-        buffer = io.BytesIO()
-        with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
-            df.to_excel(writer, index=False, sheet_name='Flujo')
-            resumen_df.to_excel(writer, index=False, sheet_name='Resumen')
-            criticos_df.to_excel(writer, index=False, sheet_name='Dias_Criticos')
-            recomendaciones_df.to_excel(writer, index=False, sheet_name='Recomendaciones')
-        buffer.seek(0)
-        with open("cashflow_exportado_final.xlsx", "wb") as f:
-            f.write(buffer.read())
-        display(FileLink("cashflow_exportado_final.xlsx"))
+    st.subheader("🚨 Días Críticos (Saldo < 500)")
+    st.dataframe(criticos[['fecha', 'saldo', 'gastos', 'descripcion_gastos']], use_container_width=True)
 
-boton.on_click(simular)
-display(widgets.VBox([fecha_inicio, fecha_fin, saldo_inicial, *sliders.values(), boton, output, excel_output]))
+    st.subheader("💡 Recomendaciones")
+    st.dataframe(recomendaciones, use_container_width=True)
 
-
-
+    st.subheader("📤 Exportar a Excel")
+    buffer = BytesIO()
+    with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
+        df.to_excel(writer, index=False, sheet_name='Flujo')
+        resumen.to_excel(writer, index=False, sheet_name='Resumen')
+        criticos.to_excel(writer, index=False, sheet_name='Dias_Criticos')
+        recomendaciones.to_excel(writer, index=False, sheet_name='Recomendaciones')
+    st.download_button(
+        label="📥 Descargar Excel",
+        data=buffer.getvalue(),
+        file_name="cashflow_exportado.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
